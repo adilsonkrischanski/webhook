@@ -142,3 +142,17 @@ python3 -m venv .venv
 ```
 
 A implantação utiliza [Gunicorn](https://flask.palletsprojects.com/en/stable/deploying/gunicorn/) e configura o [proxy confiável](https://flask.palletsprojects.com/en/stable/deploying/proxy_fix/) conforme a documentação oficial do Flask.
+
+## Deploy pelo Jenkins com proxy existente
+
+O [Jenkinsfile](Jenkinsfile) usa `scripts/deploy.sh` para publicar o backend no Docker do agente Jenkins. O agente precisa estar no servidor de destino, ter Docker e curl e conseguir ler `/var/env/webhook.env`. Se houver vários agentes, substitua `agent any` por um label exclusivo desse servidor. O acesso SSH ao repositório deve estar configurado no agente ou no `credentialsId` do checkout.
+
+Neste modo, o proxy HTTPS existente deve encaminhar `webhook.krischanski.dev` para **127.0.0.1:8089**, que mapeia a porta **8000** do Gunicorn. O pipeline não inicia o Caddy do Compose. Se o proxy estiver em outro container, conecte-o à rede `webhook-network` e use `webhook-backend-container:8000` como upstream; o loopback do container do proxy não é o loopback do host.
+
+O arquivo `/var/env/webhook.env` deve conter pelo menos `ADMIN_USERNAME`, `ADMIN_PASSWORD` e `SECRET_KEY` (32 caracteres ou mais). O deploy força a URL pública HTTPS, cookies seguros, confiança no proxy e o SQLite no volume `webhook-data` em `/data`. Não exponha a porta 8000 diretamente nem conecte containers não confiáveis à rede do proxy.
+
+O pipeline constrói uma imagem identificada por commit/build, executa os testes sem credenciais de produção e só então troca o container. Desabilita execuções simultâneas do mesmo job, conforme as [opções oficiais do Jenkins](https://www.jenkins.io/doc/book/pipeline/syntax/). Esse job deve ser o único responsável pelo deploy desse container.
+
+Durante a troca existe uma breve indisponibilidade. O script para o container anterior, faz backup SQLite antes das migrações e mantém o container anterior até validar o healthcheck interno e `/healthz` pela porta publicada. Se a nova versão falhar, remove o candidato, restaura o banco e reinicia o anterior. Chamadas recebidas pela versão candidata antes de uma reversão são descartadas com a restauração do backup. Interrupções abruptas do agente/host podem exigir recuperação manual; nesses casos, inspecione o container `webhook-backend-container-previous` e `/data/.deploy-backup.sqlite` antes de repetir.
+
+Se o container atual não usar o volume esperado em `/data`, o deploy é interrompido para evitar perda silenciosa de dados. Para reutilizar os dados de uma instalação Compose, altere `DATA_VOLUME` no Jenkinsfile para o nome real do volume existente e pare a instalação anterior antes da migração. Para dados presentes apenas na camada gravável de um container antigo, faça backup e migre-os para o volume antes do primeiro deploy.
