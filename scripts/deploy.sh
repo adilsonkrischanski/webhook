@@ -131,7 +131,7 @@ docker run -d \
     -e TRUST_PROXY=true \
     --mount "type=volume,src=$DATA_VOLUME,dst=/data" \
     --read-only --tmpfs /tmp \
-    --cap-drop ALL --security-opt no-new-privileges:true \
+    --cap-drop ALL \
     -p "127.0.0.1:$HOST_PORT:$CONTAINER_PORT" \
     "$image" >/dev/null
 

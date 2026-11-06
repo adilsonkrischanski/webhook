@@ -156,3 +156,16 @@ O pipeline constrói uma imagem identificada por commit/build, executa os testes
 Durante a troca existe uma breve indisponibilidade. O script para o container anterior, faz backup SQLite antes das migrações e mantém o container anterior até validar o healthcheck interno e `/healthz` pela porta publicada. Se a nova versão falhar, remove o candidato, restaura o banco e reinicia o anterior. Chamadas recebidas pela versão candidata antes de uma reversão são descartadas com a restauração do backup. Interrupções abruptas do agente/host podem exigir recuperação manual; nesses casos, inspecione o container `webhook-backend-container-previous` e `/data/.deploy-backup.sqlite` antes de repetir.
 
 Se o container atual não usar o volume esperado em `/data`, o deploy é interrompido para evitar perda silenciosa de dados. Para reutilizar os dados de uma instalação Compose, altere `DATA_VOLUME` no Jenkinsfile para o nome real do volume existente e pare a instalação anterior antes da migração. Para dados presentes apenas na camada gravável de um container antigo, faça backup e migre-os para o volume antes do primeiro deploy.
+
+### Python bloqueado antes dos testes no Jenkins
+
+Se aparecer `exec /usr/local/bin/python: operation not permitted`, o interpretador não iniciou: não é uma falha de asserção do pytest. Uma hipótese é a incompatibilidade do runtime/perfil de segurança do host com `--security-opt no-new-privileges:true`. O Jenkinsfile e o script de deploy omitem essa opção para compatibilidade, mantendo o usuário não root, o filesystem somente leitura e `--cap-drop ALL`. O Compose permanece com sua configuração original.
+
+Para confirmar essa hipótese no servidor, compare, usando a imagem do build que falhou:
+
+```bash
+docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL webhook-backend:TAG_DO_BUILD python --version
+docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true webhook-backend:TAG_DO_BUILD python --version
+```
+
+Se apenas o segundo comando falhar, a incompatibilidade com a opção fica isolada. Se ambos falharem, verifique os logs do runtime e do perfil de segurança do servidor antes de alterar outras restrições. A documentação do Docker explica a [opção no-new-privileges](https://docs.docker.com/reference/cli/docker/container/run/) e o [diagnóstico do AppArmor](https://docs.docker.com/engine/security/apparmor/).
