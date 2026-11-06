@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Webhook data and backups
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*

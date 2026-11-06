@@ -1,0 +1,7 @@
+{$SITE_ADDRESS:webhook.krischanski.dev} {
+    reverse_proxy app:8000
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        -Server
+    }
+}

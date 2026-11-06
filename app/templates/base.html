@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Webhook · Controle de integrações</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"><script defer src="{{ url_for('static', filename='app.js') }}"></script></head>
+<body><header><a class="brand" href="{{ url_for('dashboard') }}"><span class="logo">W</span> webhook<span class="muted"> / console</span></a>{% if session.get('admin') %}<form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="quiet">Sair da conta</button></form>{% endif %}</header>
+<main>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}{% block content %}{% endblock %}</main><footer>Webhook Console <span>Datas em UTC · Credenciais protegidas</span></footer></body></html>

@@ -1,0 +1,10 @@
+services:
+  app:
+    environment:
+      COOKIE_SECURE: "false"
+      PUBLIC_BASE_URL: http://localhost:${LOCAL_PORT:-8090}
+  caddy:
+    environment:
+      SITE_ADDRESS: ":80"
+    ports: !override
+      - "127.0.0.1:${LOCAL_PORT:-8090}:80"
