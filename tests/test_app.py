@@ -57,7 +57,7 @@ def test_login_csrf_session_and_throttle(client, app):
     assert client.get('/admin').status_code == 302
 
 
-@pytest.mark.parametrize('auth', ['none', 'bearer', 'basic'])
+@pytest.mark.parametrize('auth', ['none', 'bearer', 'basic', 'query'])
 def test_auth_record_detail_and_rotation(client, app, auth):
     login(client)
     response = create_endpoint(client, auth)
@@ -75,10 +75,17 @@ def test_auth_record_detail_and_rotation(client, app, auth):
         headers['Authorization'] = 'Bearer ' + secret
     elif auth == 'basic':
         headers['Authorization'] = 'Basic ' + base64.b64encode(f'{username}:{secret}'.encode()).decode()
+    token = secret if auth == 'query' else 'hidden'
+    if auth == 'query':
+        assert re.fullmatch(r'[0-9a-f]{64}', secret)
+        assert f'/teste?token={secret}' in html
+        unauthorized = client.post('/teste?token=wrong')
+        assert unauthorized.status_code == 401
+        assert 'WWW-Authenticate' not in unauthorized.headers
     if auth != 'none':
         assert client.post('/teste').status_code == 401
         assert client.post('/teste', headers={'Authorization': 'Bearer wrong'}).status_code == 401
-    response = client.post('/teste?token=hidden&foo=bar', data=b'{"evento":"<script>alert(1)</script>"}', headers=headers)
+    response = client.post(f'/teste?token={token}&foo=bar', data=b'{"evento":"<script>alert(1)</script>"}', headers=headers)
     assert response.status_code == 200
     request_id = response.json['request_id']
     detail = client.get('/admin/requests/' + request_id)
@@ -88,15 +95,37 @@ def test_auth_record_detail_and_rotation(client, app, auth):
     assert client.get('/admin/requests/' + request_id + '/download').data == b'{"evento":"<script>alert(1)</script>"}'
     with app.app_context():
         item = db.session.get(WebhookRequest, request_id)
-        assert 'hidden' not in item.query
+        assert token not in item.query
         assert 'foo=bar' in item.query
-        if auth != 'none':
+        if auth in {'bearer', 'basic'}:
             assert secret not in item.headers
             assert '[REDACTED]' in item.headers
     assert client.get(f'/admin/endpoints/{endpoint_id}/history?auth=ok&method=POST').status_code == 200
     assert post(client, f'/admin/endpoints/{endpoint_id}/rotate').status_code == 200
     if auth != 'none':
-        assert client.post('/teste', headers=headers).status_code == 401
+        assert client.post(f'/teste?token={token}', headers=headers).status_code == 401
+    assert client.get('/admin').status_code == 200
+
+
+def test_replay_data_filters_sensitive_values(client, app):
+    login(client)
+    create_endpoint(client)
+    body = b'\x00\xff{"peso":10}'
+    request_id = client.post('/teste?token=secret&foo=bar', data=body, headers={'Authorization': 'Bearer x', 'X-Custom': 'keep', 'Cookie': 'a=b', 'Content-Type': 'application/json'}).json['request_id']
+    data = client.get(f'/admin/requests/{request_id}/replay-data').json
+    assert base64.b64decode(data['body_b64']) == body
+    assert data['method'] == 'POST'
+    assert data['query'] == [['foo', 'bar']]
+    assert data['content_type'] == 'application/json'
+    lowered = {k.lower(): v for k, v in data['headers'].items()}
+    assert lowered['x-custom'] == 'keep'
+    for name in ['authorization', 'cookie', 'host', 'content-length']:
+        assert name not in lowered
+    detail = client.get('/admin/requests/' + request_id)
+    assert 'id="replay"' in detail.text
+    assert "connect-src 'self' http://localhost:*" in detail.headers['Content-Security-Policy']
+    post(client, '/logout')
+    assert client.get(f'/admin/requests/{request_id}/replay-data').status_code == 302
 
 
 def test_endpoint_validation_and_edit(client, app):

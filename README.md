@@ -89,6 +89,33 @@ curl -X POST https://webhook.krischanski.dev/teste \
 
 Para Bearer, adicione `-H 'Authorization: Bearer SEU_TOKEN'`. Para Basic, adicione `-u 'USUARIO:SENHA'`. O painel já apresenta o comando completo após gerar credenciais.
 
+Para **Token na URL**, a plataforma gera um token de 64 caracteres hexadecimais que o cliente envia no parâmetro `token`:
+
+```bash
+curl -X POST 'https://webhook.krischanski.dev/kugel-web/rest/SaturnoWebhook/pesagem/1?token=SEU_TOKEN'   -H 'Content-Type: application/json'   -d '{"peso":10}'
+```
+
+O token é armazenado com hash e aparece como `[REDACTED]` no histórico. Use esse modelo apenas quando o cliente não suportar cabeçalhos, porque URLs costumam ser registradas em logs de servidores e proxies.
+
+### Reenviar para uma aplicação local
+
+No detalhe de uma requisição, o card **Reenviar para aplicação local** replica a chamada (método, query, cabeçalhos e corpo originais) a partir do **navegador**. Por isso ele alcança aplicações rodando na sua máquina, como `http://localhost:8080/kugel-web/rest/SaturnoWebhook/pesagem/1`.
+
+- Somente destinos `localhost` e `127.0.0.1` são aceitos, e a CSP (`connect-src`) bloqueia qualquer outro.
+- As credenciais originais nunca são reenviadas. Configure a autenticação do destino: token na URL (nome do parâmetro configurável), Bearer, Basic ou header customizado.
+- Com **Lembrar neste navegador** marcado, destino e credenciais ficam no `localStorage`, separados por endpoint. Nada disso vai para o servidor.
+
+A aplicação de destino precisa liberar CORS para a origem do painel e responder ao preflight `OPTIONS`:
+
+```
+Access-Control-Allow-Origin: https://webhook.krischanski.dev   (ou http://localhost:8090 no modo local)
+Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE
+Access-Control-Allow-Headers: Authorization, Content-Type, <headers repassados>
+Access-Control-Allow-Private-Network: true                     (Chrome, origem pública -> localhost)
+```
+
+O Chrome também pode pedir permissão de "acesso à rede local" no primeiro envio. Se o envio falhar sem status HTTP, verifique se a aplicação está no ar, se o CORS está configurado e se essa permissão foi concedida.
+
 São aceitos GET, POST, PUT, PATCH, DELETE, OPTIONS e HEAD. A plataforma recebe e registra; não encaminha nem executa o conteúdo recebido. Os caminhos são exatos e não terminam com barra. `/admin`, `/login`, `/logout`, `/static` e `/healthz` e seus subcaminhos são reservados.
 
 | HTTP | Resultado |

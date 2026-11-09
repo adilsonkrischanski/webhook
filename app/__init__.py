@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import io
@@ -68,6 +69,10 @@ class LoginAttempt(db.Model):
     created_at = db.Column(db.DateTime, default=now, nullable=False, index=True)
 
 
+AUTH_TYPES = {'none', 'bearer', 'basic', 'query'}
+# Headers that the browser forbids or that make no sense when replaying a request elsewhere.
+REPLAY_SKIP_HEADERS = {'host', 'content-length', 'connection', 'cookie', 'accept-encoding', 'origin', 'referer', 'user-agent', 'transfer-encoding', 'keep-alive', 'upgrade', 'te', 'trailer', 'x-real-ip', 'via', 'forwarded', 'expect'}
+REDACTED = '[REDACTED]'
 SENSITIVE = {'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key', 'api-key', 'token', 'access_token', 'password', 'secret', 'api_key'}
 
 
@@ -128,7 +133,7 @@ def create_app(config=None):
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers['Referrer-Policy'] = 'no-referrer'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         if request.endpoint != 'static':
             response.headers['Cache-Control'] = 'no-store'
         return response
@@ -184,7 +189,7 @@ def create_app(config=None):
         return db.get_or_404(Endpoint, endpoint_id)
 
     def generate_credentials(endpoint):
-        secret = secrets.token_urlsafe(32)
+        secret = secrets.token_hex(32) if endpoint.auth_type == 'query' else secrets.token_urlsafe(32)
         endpoint.username = 'wh_' + secrets.token_hex(6) if endpoint.auth_type == 'basic' else None
         endpoint.secret_hash = generate_password_hash(secret) if endpoint.auth_type != 'none' else None
         return secret if endpoint.auth_type != 'none' else None
@@ -202,7 +207,7 @@ def create_app(config=None):
         duplicate = db.session.scalar(db.select(Endpoint).where(Endpoint.path == path, Endpoint.id != (endpoint.id or 0)))
         if duplicate:
             raise ValueError('Esse caminho já está cadastrado, inclusive no arquivo de endpoints excluídos.')
-        if auth_type not in {'none', 'bearer', 'basic'}:
+        if auth_type not in AUTH_TYPES:
             raise ValueError('Selecione uma autenticação válida.')
         changed = endpoint.auth_type != auth_type
         endpoint.name, endpoint.path, endpoint.auth_type = name, path, auth_type
@@ -329,6 +334,15 @@ def create_app(config=None):
         item = db.get_or_404(WebhookRequest, request_id)
         return send_file(io.BytesIO(item.body), mimetype='application/octet-stream', as_attachment=True, download_name=f'{item.id}.bin')
 
+    @app.get('/admin/requests/<request_id>/replay-data')
+    @login_required
+    def replay_data(request_id):
+        item = db.get_or_404(WebhookRequest, request_id)
+        headers = {key: value for key, value in json.loads(item.headers).items()
+                   if value != REDACTED and key.lower() not in REPLAY_SKIP_HEADERS and not key.lower().startswith('x-forwarded-')}
+        query = [[k, v] for k, v in parse_qsl(item.query, keep_blank_values=True) if v != REDACTED]
+        return jsonify(method=item.method, query=query, headers=headers, content_type=item.content_type, body_b64=base64.b64encode(item.body).decode('ascii'))
+
     @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], provide_automatic_options=False)
     def receive(path):
         if path.split('/')[0] in {'admin', 'login', 'logout', 'static', 'healthz'}:
@@ -342,6 +356,8 @@ def create_app(config=None):
             valid = check_password_hash(endpoint.secret_hash, auth.token or '')
         elif endpoint.auth_type == 'basic' and auth and auth.type.lower() == 'basic':
             valid = hmac.compare_digest((auth.username or '').encode(), endpoint.username.encode()) and check_password_hash(endpoint.secret_hash, auth.password or '')
+        elif endpoint.auth_type == 'query' and request.args.get('token'):
+            valid = check_password_hash(endpoint.secret_hash, request.args.get('token'))
         status = 200 if valid else 401
         try:
             body = request.get_data()
@@ -354,7 +370,7 @@ def create_app(config=None):
         db.session.commit()
         response = jsonify(status={200: 'received', 401: 'unauthorized', 413: 'payload_too_large'}[status], request_id=item.id)
         response.status_code = status
-        if status == 401:
+        if status == 401 and endpoint.auth_type in {'basic', 'bearer'}:
             response.headers['WWW-Authenticate'] = 'Basic realm="webhook"' if endpoint.auth_type == 'basic' else 'Bearer'
         return response
 
