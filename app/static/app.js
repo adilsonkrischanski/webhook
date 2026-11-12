@@ -127,3 +127,37 @@ document.querySelectorAll('input[readonly]').forEach(input => {
     }
   });
 })();
+
+document.querySelectorAll('button[data-copy]').forEach(button => {
+  const label = button.textContent;
+  let timer;
+  const flash = text => {
+    button.textContent = text;
+    clearTimeout(timer);
+    timer = setTimeout(() => { button.textContent = label; }, 2000);
+  };
+  const fallbackCopy = text => {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    if (!ok) throw new Error('copy failed');
+  };
+  button.addEventListener('click', async () => {
+    const source = document.querySelector(button.dataset.copy);
+    if (!source) return;
+    const text = source.textContent;
+    try {
+      if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+      else fallbackCopy(text);
+      flash('Copiado ✓');
+    } catch (e) {
+      try { fallbackCopy(text); flash('Copiado ✓'); } catch (e2) { flash('Falha ao copiar'); }
+    }
+  });
+});
